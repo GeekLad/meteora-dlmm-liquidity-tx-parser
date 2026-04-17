@@ -1,0 +1,36 @@
+{
+  "name": "@geeklad/meteora-dlmm-liquidity-tx-parser",
+  "version": "0.1.0",
+  "description": "Parse Meteora DLMM liquidity transactions on Solana into structured data",
+  "license": "MIT",
+  "author": "GeekLad",
+  "keywords": [
+    "solana",
+    "meteora",
+    "dlmm",
+    "liquidity",
+    "defi",
+    "transaction",
+    "parser"
+  ],
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build",
+    "test": "jest"
+  },
+  "dependencies": {
+    "@geeklad/solana-tx-parser": "^1.0.2",
+    "@meteora-ag/dlmm": "^1.9.4",
+    "@solana/web3.js": "^1.98.4"
+  },
+  "devDependencies": {
+    "ts-node": "^10.9.2",
+    "typescript": "^5.0.0"
+  }
+}
