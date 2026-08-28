@@ -57,6 +57,11 @@ function printInstruction(ix: DlmmInstruction) {
   if (ix.pool) console.log(`  Pool      : ${ix.pool}`);
   if (ix.active_bin_id !== undefined)
     console.log(`  Active Bin: ${ix.active_bin_id}`);
+  if (ix.lower_bin_id !== undefined)
+    console.log(`  Lower Bin : ${ix.lower_bin_id}`);
+  if (ix.upper_bin_id !== undefined)
+    console.log(`  Upper Bin : ${ix.upper_bin_id}`);
+  if (ix.strategy) console.log(`  Strategy  : ${ix.strategy}`);
   if (ix.amount_x !== undefined) console.log(`  Amount X  : ${ix.amount_x}`);
   if (ix.amount_y !== undefined) console.log(`  Amount Y  : ${ix.amount_y}`);
 }

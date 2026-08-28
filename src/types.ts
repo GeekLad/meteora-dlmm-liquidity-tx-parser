@@ -1,6 +1,7 @@
 import { IDL } from "@meteora-ag/dlmm";
 import { ParsedInstructionWithEvents } from "@geeklad/solana-tx-parser";
 export type DlmmInstructionType = "CreatePosition" | "ClosePosition" | "AddLiquidity" | "RemoveLiquidity" | "RebalanceLiquidity"  | "ClaimFees" | "ClaimRewards" | "Other";
+export type DlmmStrategy = "Spot" | "Curve" | "BidAsk";
 export type DlmmAccounts = { pool: string; position: string };
 
 export interface DlmmInstruction {
@@ -13,6 +14,9 @@ export interface DlmmInstruction {
     position: string;
     pool?: string;
     active_bin_id?: number;
+    lower_bin_id?: number;
+    upper_bin_id?: number;
+    strategy?: DlmmStrategy;
     amount_x?: number;
     amount_y?: number;
     originalParsedInstruction?: ParsedInstructionWithEvents;
@@ -33,6 +37,7 @@ export const IDL_INSTRUCTION_MAP: Record<IDLInstructionName, DlmmInstructionType
     add_liquidity_by_strategy2: "AddLiquidity",
     add_liquidity_by_strategy_one_side: "AddLiquidity",
     add_liquidity_by_weight: "AddLiquidity",
+    add_liquidity_by_weight2: "AddLiquidity",
     add_liquidity_one_side: "AddLiquidity",
     add_liquidity_one_side_precise: "AddLiquidity",
     add_liquidity_one_side_precise2: "AddLiquidity",
@@ -47,11 +52,13 @@ export const IDL_INSTRUCTION_MAP: Record<IDLInstructionName, DlmmInstructionType
     claim_reward: "ClaimRewards",
     claim_reward2: "ClaimRewards",
     initialize_bin_array: "Other",
+    initialize_bin_array_bitmap_extension: "Other",
     initialize_lb_pair: "Other",
     initialize_lb_pair2: "Other",
     initialize_customizable_permissionless_lb_pair: "Other",
     initialize_customizable_permissionless_lb_pair2: "Other",
     initialize_permission_lb_pair: "Other",
+    initialize_preset_parameter: "Other",
     go_to_a_bin: "Other",
     fund_reward: "Other",
     withdraw_ineligible_reward: "Other",
@@ -62,6 +69,7 @@ export const IDL_INSTRUCTION_MAP: Record<IDLInstructionName, DlmmInstructionType
     update_fees_and_reward2: "Other",
     update_reward_duration: "Other",
     update_reward_funder: "Other",
+    update_position_operator: "Other",
     swap: "Other",
     swap2: "Other",
     swap_exact_out: "Other",
@@ -72,15 +80,24 @@ export const IDL_INSTRUCTION_MAP: Record<IDLInstructionName, DlmmInstructionType
     set_pair_status_permissionless: "Other",
     set_pre_activation_duration: "Other",
     set_pre_activation_swap_address: "Other",
+    set_permissionless_operation_bits: "Other",
     update_base_fee_parameters: "Other",
     update_dynamic_fee_parameters: "Other",
-    migrate_position: "Other",
     zap_protocol_fee: "Other",
     withdraw_protocol_fee: "Other",
     close_claim_fee_operator_account: "Other",
     close_operator_account: "Other",
+    close_preset_parameter: "Other",
+    close_preset_parameter2: "Other",
+    close_token_badge: "Other",
+    close_bin_array: "Other",
     increase_position_length: "Other",
     increase_position_length2: "Other",
     decrease_position_length: "Other",
+    increase_oracle_length: "Other",
     set_activation_point: "Other",
+    place_limit_order: "Other",
+    cancel_limit_order: "Other",
+    close_limit_order_if_empty: "Other",
+    for_idl_type_generation_do_not_call: "Other",
 };
