@@ -1,6 +1,6 @@
 {
   "name": "@geeklad/meteora-dlmm-liquidity-tx-parser",
-  "version": "0.2.0",
+  "version": "1.0.3",
   "description": "Parse Meteora DLMM liquidity transactions on Solana into structured data",
   "license": "MIT",
   "author": "GeekLad",
