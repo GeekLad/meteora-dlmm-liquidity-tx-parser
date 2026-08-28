@@ -78,10 +78,10 @@ function parseMeteoraInstruction(
 }
 
 function getTxType(ix: ParsedInstructionWithEvents): DlmmInstructionType {
-    const txType = "parsedInstruction" in ix 
-        && ix.parsedInstruction !== null 
-        && "name" in ix.parsedInstruction 
-            ? IDL_INSTRUCTION_MAP[ix.parsedInstruction.name] 
+    const txType = "parsedInstruction" in ix
+        && ix.parsedInstruction !== null
+        && "name" in ix.parsedInstruction
+            ? IDL_INSTRUCTION_MAP[ix.parsedInstruction.name as keyof typeof IDL_INSTRUCTION_MAP] ?? "Other"
             : "Other";
     if (txType !== "RebalanceLiquidity") {
         return txType;
