@@ -85,10 +85,12 @@ function getTxType(ix: ParsedInstructionWithEvents): DlmmInstructionType {
         const y_added_amount = Number(event.data.y_added_amount);
         const x_withdrawn_amount = Number(event.data.x_withdrawn_amount);
         const y_withdrawn_amount = Number(event.data.y_withdrawn_amount);
-        if ((x_added_amount > 0 || y_added_amount > 0) && (x_withdrawn_amount == 0 || y_withdrawn_amount == 0)) {
+        const added = x_added_amount > 0 || y_added_amount > 0;
+        const withdrawn = x_withdrawn_amount > 0 || y_withdrawn_amount > 0;
+        if (added && !withdrawn) {
             return "AddLiquidity";
         }
-        if ((x_added_amount == 0 || y_added_amount == 0) && (x_withdrawn_amount > 0 || y_withdrawn_amount > 0)) {
+        if (withdrawn && !added) {
             return "RemoveLiquidity";
         }
         return "Other";
