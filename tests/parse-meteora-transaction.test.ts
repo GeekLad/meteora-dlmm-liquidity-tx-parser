@@ -543,6 +543,57 @@ describe("parseMeteoraTransaction", () => {
     expect(ix.pool).toBe(POOL);
   });
 
+  it("reads unsided rebalance event ranges when no other bin source is present", () => {
+    mockedParseInstructions.mockReturnValue([
+      makeIx("close_position2", [
+        {
+          name: "Rebalancing",
+          data: {
+            new_min_id: 21,
+            new_max_id: 29,
+            old_min_id: 10,
+            old_max_id: 40,
+          },
+        },
+      ]),
+    ]);
+
+    const [ix] = parseMeteoraTransaction(makeTx());
+    expect(ix.type).toBe("ClosePosition");
+    expect(ix.lower_bin_id).toBe(21);
+    expect(ix.upper_bin_id).toBe(29);
+  });
+
+  it("falls back to old_min_id/old_max_id on the unsided rebalance event path", () => {
+    mockedParseInstructions.mockReturnValue([
+      makeIx("close_position2", [
+        {
+          name: "Rebalancing",
+          data: {
+            old_min_id: 4,
+            old_max_id: 8,
+          },
+        },
+      ]),
+    ]);
+
+    const [ix] = parseMeteoraTransaction(makeTx());
+    expect(ix.lower_bin_id).toBe(4);
+    expect(ix.upper_bin_id).toBe(8);
+  });
+
+  it("leaves bin range empty on the unsided path when the rebalance event has no bounds", () => {
+    mockedParseInstructions.mockReturnValue([
+      makeIx("close_position2", [
+        { name: "Rebalancing", data: { active_bin_id: 1 } },
+      ]),
+    ]);
+
+    const [ix] = parseMeteoraTransaction(makeTx());
+    expect(ix.lower_bin_id).toBeUndefined();
+    expect(ix.upper_bin_id).toBeUndefined();
+  });
+
   it("treats one-sided add or remove rebalances as add/remove, not mixed", () => {
     mockedParseInstructions.mockReturnValue([
       makeIx("rebalance_liquidity", [
@@ -1010,6 +1061,60 @@ describe("parseMeteoraTransaction", () => {
     expect(remove.type).toBe("RemoveLiquidity");
     expect(remove.lower_bin_id).toBe(15);
     expect(remove.upper_bin_id).toBe(15);
+  });
+
+  it("falls through add-side params when active_id is missing", () => {
+    mockedParseInstructions.mockReturnValue([
+      makeIx("rebalance_liquidity", [
+        {
+          name: "Rebalancing",
+          data: {
+            active_bin_id: 20,
+            x_added_amount: 1,
+            y_added_amount: 0,
+            x_withdrawn_amount: 0,
+            y_withdrawn_amount: 0,
+            new_min_id: 7,
+            new_max_id: 9,
+          },
+        },
+      ], {
+        data: {
+          params: {
+            adds: [{ min_delta_id: -2, max_delta_id: 2 }],
+          },
+        },
+      }),
+    ]);
+
+    const [ix] = parseMeteoraTransaction(makeTx());
+    expect(ix.lower_bin_id).toBe(7);
+    expect(ix.upper_bin_id).toBe(9);
+  });
+
+  it("falls through remove-side params when removes is omitted", () => {
+    mockedParseInstructions.mockReturnValue([
+      makeIx("rebalance_liquidity", [
+        {
+          name: "Rebalancing",
+          data: {
+            active_bin_id: 20,
+            x_added_amount: 0,
+            y_added_amount: 0,
+            x_withdrawn_amount: 3,
+            y_withdrawn_amount: 0,
+            old_min_id: 11,
+            old_max_id: 19,
+          },
+        },
+      ], {
+        data: { params: { active_id: 20 } },
+      }),
+    ]);
+
+    const [ix] = parseMeteoraTransaction(makeTx());
+    expect(ix.lower_bin_id).toBe(11);
+    expect(ix.upper_bin_id).toBe(19);
   });
 
   it("falls through rebalance params that have no add/remove lists", () => {
