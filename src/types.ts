@@ -1,6 +1,7 @@
 import { IDL } from "@meteora-ag/dlmm";
 import { ParsedInstructionWithEvents } from "@geeklad/solana-tx-parser";
 export type DlmmInstructionType = "CreatePosition" | "ClosePosition" | "AddLiquidity" | "RemoveLiquidity" | "RebalanceLiquidity"  | "ClaimFees" | "ClaimRewards" | "Other";
+export type DlmmStrategy = "Spot" | "Curve" | "BidAsk";
 export type DlmmAccounts = { pool: string; position: string };
 
 export interface DlmmInstruction {
@@ -13,6 +14,9 @@ export interface DlmmInstruction {
     position: string;
     pool?: string;
     active_bin_id?: number;
+    lower_bin_id?: number;
+    upper_bin_id?: number;
+    strategy?: DlmmStrategy;
     amount_x?: number;
     amount_y?: number;
     originalParsedInstruction?: ParsedInstructionWithEvents;

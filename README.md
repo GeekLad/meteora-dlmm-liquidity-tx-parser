@@ -41,6 +41,9 @@ if (tx) {
     "pool": "7Bxi6...",
     "position": "9Kzm2...",
     "active_bin_id": 5432,
+    "lower_bin_id": 5400,
+    "upper_bin_id": 5460,
+    "strategy": "Spot",
     "amount_x": 1000000,
     "amount_y": 2500000
   }
@@ -75,9 +78,32 @@ Parses a Solana transaction and returns all Meteora DLMM liquidity instructions 
 | `position` | `string` | Position account public key |
 | `pool` | `string \| undefined` | Liquidity pool public key |
 | `active_bin_id` | `number \| undefined` | Active bin at time of instruction |
+| `lower_bin_id` | `number \| undefined` | Lowest bin ID in the instruction's range, when the instruction or event carries one |
+| `upper_bin_id` | `number \| undefined` | Highest bin ID in the instruction's range, when the instruction or event carries one |
+| `strategy` | `DlmmStrategy \| undefined` | Liquidity shape used for strategy deposits: `Spot`, `Curve`, or `BidAsk` |
 | `amount_x` | `number \| undefined` | Token X amount |
 | `amount_y` | `number \| undefined` | Token Y amount |
 | `originalParsedInstruction` | `ParsedInstructionWithEvents \| undefined` | Raw decoded instruction (debug mode only) |
+
+Bin range and strategy are omitted unless the instruction or event actually provides them:
+
+| Source | `lower_bin_id` / `upper_bin_id` | `strategy` |
+|--------|----------------------------------|------------|
+| Create position (`initialize_position*`) | `lower_bin_id` and `width` (`upper = lower + width - 1`) | — |
+| Add liquidity by strategy | `strategy_parameters.min_bin_id` / `max_bin_id` | `strategy_parameters.strategy_type` mapped to `Spot`, `Curve`, or `BidAsk` |
+| Add liquidity by bin list / weights | min/max `bin_id` in the distribution | — |
+| Remove liquidity by range | `from_bin_id` / `to_bin_id` | — |
+| Remove liquidity by bin list | min/max `bin_id` in `bin_liquidity_removal` | — |
+| Claim fee/reward v2 | `min_bin_id` / `max_bin_id` | — |
+| Rebalance | remove/add ranges from instruction args, else `new_min_id` / `new_max_id` on the `Rebalancing` event | — |
+
+#### `DlmmStrategy`
+
+```typescript
+type DlmmStrategy = "Spot" | "Curve" | "BidAsk";
+```
+
+On-chain `StrategyType` variants such as `SpotImBalanced` and `BidAskOneSide` are collapsed into these three names.
 
 #### `DlmmInstructionType`
 

@@ -133,7 +133,79 @@ describe("event names and fields used by the parser", () => {
         "y_added_amount",
         "x_withdrawn_amount",
         "y_withdrawn_amount",
+        "old_min_id",
+        "old_max_id",
+        "new_min_id",
+        "new_max_id",
       ])
     );
+  });
+});
+
+describe("bin range and strategy IDL names", () => {
+  function instructionArgNames(ixName: string): string[] {
+    const ix = IDL.instructions.find((instruction) => instruction.name === ixName);
+    return (ix?.args ?? []).map((arg) => arg.name);
+  }
+
+  it("exposes lower_bin_id and width on create-position instructions", () => {
+    for (const name of [
+      "initialize_position",
+      "initialize_position2",
+      "initialize_position_pda",
+      "initialize_position_by_operator",
+    ]) {
+      expect(instructionArgNames(name)).toEqual(
+        expect.arrayContaining(["lower_bin_id", "width"])
+      );
+    }
+  });
+
+  it("exposes from_bin_id and to_bin_id on remove-by-range instructions", () => {
+    expect(instructionArgNames("remove_liquidity_by_range")).toEqual(
+      expect.arrayContaining(["from_bin_id", "to_bin_id"])
+    );
+    expect(instructionArgNames("remove_liquidity_by_range2")).toEqual(
+      expect.arrayContaining(["from_bin_id", "to_bin_id"])
+    );
+  });
+
+  it("exposes min_bin_id and max_bin_id on claim_fee2 and claim_reward2", () => {
+    expect(instructionArgNames("claim_fee2")).toEqual(
+      expect.arrayContaining(["min_bin_id", "max_bin_id"])
+    );
+    expect(instructionArgNames("claim_reward2")).toEqual(
+      expect.arrayContaining(["min_bin_id", "max_bin_id"])
+    );
+  });
+
+  it("exposes strategy_parameters.min_bin_id/max_bin_id/strategy_type", () => {
+    expect(structFieldNames("StrategyParameters")).toEqual(
+      expect.arrayContaining(["min_bin_id", "max_bin_id", "strategy_type"])
+    );
+    expect(structFieldNames("LiquidityParameterByStrategy")).toContain(
+      "strategy_parameters"
+    );
+    expect(structFieldNames("LiquidityParameterByStrategyOneSide")).toContain(
+      "strategy_parameters"
+    );
+  });
+
+  it("keeps StrategyType variants mappable to Spot, Curve, or BidAsk", () => {
+    const typeDef = IDL.types.find((entry) => entry.name === "StrategyType");
+    expect(typeDef?.type.kind).toBe("enum");
+    const variants = typeDef?.type.kind === "enum"
+      ? (typeDef.type.variants ?? []).map((variant) => variant.name)
+      : [];
+
+    expect(variants.length).toBeGreaterThan(0);
+    for (const name of variants) {
+      const normalized = name.toLowerCase();
+      const matches =
+        normalized.includes("spot")
+        || normalized.includes("curve")
+        || normalized.includes("bid");
+      expect({ name, matches }).toEqual({ name, matches: true });
+    }
   });
 });
