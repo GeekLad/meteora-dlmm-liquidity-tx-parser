@@ -24,16 +24,14 @@ export function parseMeteoraTransaction(tx: ParsedTransactionWithMeta, debug = f
                 .filter((innerIx) => innerIx.programId === programId)
             );
 
-    return meteoraInstructions
-        .map((ix) => parseMeteoraInstruction(tx, ix, debug))
-        .filter((ix) => !!ix);
+    return meteoraInstructions.flatMap((ix) => parseMeteoraInstruction(tx, ix, debug));
 }
 
 function parseMeteoraInstruction(
     tx: ParsedTransactionWithMeta, 
     originalParsedInstruction: ParsedInstructionWithEvents,
     debug = false,
-): DlmmInstruction | undefined {
+): DlmmInstruction[] {
     const { transaction, slot, blockTime } = tx;
     const signature = transaction.signatures[0];
     const signer = transaction.message.accountKeys[0].pubkey.toString();
@@ -41,61 +39,98 @@ function parseMeteoraInstruction(
     const fee = tx.meta!.fee;
     const txType = getTxType(originalParsedInstruction);
     if (txType === "Other") {
-        return;
+        return [];
     }
     const { pool, position } = getDlmmAccounts(originalParsedInstruction);
-    const { active_bin_id, amount_x, amount_y } = getAmounts(originalParsedInstruction);
-    const { lower_bin_id, upper_bin_id } = getBinRange(originalParsedInstruction);
-    const strategy = getStrategy(originalParsedInstruction);
-
-    const parsed: DlmmInstruction = {
+    const base = {
         signature,
         signer,
         slot,
         timestamp,
         fee,
-        type: txType,
         pool,
         position,
+    };
+
+    if (txType === "RebalanceLiquidity") {
+        return splitRebalance(base, originalParsedInstruction, debug);
+    }
+
+    const { active_bin_id, amount_x, amount_y } = getAmounts(originalParsedInstruction);
+    const { lower_bin_id, upper_bin_id } = getBinRange(originalParsedInstruction);
+    const strategy = getStrategy(originalParsedInstruction);
+    return [withDebug({
+        ...base,
+        type: txType,
         active_bin_id,
         lower_bin_id,
         upper_bin_id,
         strategy,
         amount_x,
         amount_y,
-    };
+    }, originalParsedInstruction, debug)];
+}
+
+function withDebug(
+    parsed: DlmmInstruction,
+    originalParsedInstruction: ParsedInstructionWithEvents,
+    debug: boolean,
+): DlmmInstruction {
     if (debug) {
         parsed.originalParsedInstruction = originalParsedInstruction;
     }
     return parsed;
 }
 
-function getTxType(ix: ParsedInstructionWithEvents): DlmmInstructionType {
-    const txType = "parsedInstruction" in ix
-        && ix.parsedInstruction !== null
-        && "name" in ix.parsedInstruction
-            ? IDL_INSTRUCTION_MAP[ix.parsedInstruction.name as keyof typeof IDL_INSTRUCTION_MAP] ?? "Other"
-            : "Other";
-    if (txType !== "RebalanceLiquidity") {
-        return txType;
+function splitRebalance(
+    base: Omit<DlmmInstruction, "type">,
+    ix: ParsedInstructionWithEvents,
+    debug: boolean,
+): DlmmInstruction[] {
+    const event = ix.events?.find((entry) => entry.name === "Rebalancing");
+    if (!event) {
+        throw new Error("Could not find Rebalancing event in rebalance transaction");
     }
-    const event = ix.events?.find((event) => event.name === "Rebalancing");
-    if (event) {
-        const x_added_amount = Number(event.data.x_added_amount);
-        const y_added_amount = Number(event.data.y_added_amount);
-        const x_withdrawn_amount = Number(event.data.x_withdrawn_amount);
-        const y_withdrawn_amount = Number(event.data.y_withdrawn_amount);
-        const added = x_added_amount > 0 || y_added_amount > 0;
-        const withdrawn = x_withdrawn_amount > 0 || y_withdrawn_amount > 0;
-        if (added && !withdrawn) {
-            return "AddLiquidity";
-        }
-        if (withdrawn && !added) {
-            return "RemoveLiquidity";
-        }
+
+    const x_added = Number(event.data.x_added_amount);
+    const y_added = Number(event.data.y_added_amount);
+    const x_withdrawn = Number(event.data.x_withdrawn_amount);
+    const y_withdrawn = Number(event.data.y_withdrawn_amount);
+    const active_bin_id = event.data.active_bin_id;
+    const results: DlmmInstruction[] = [];
+
+    if (x_added > 0 || y_added > 0) {
+        results.push(withDebug({
+            ...base,
+            type: "AddLiquidity",
+            active_bin_id,
+            ...getBinRange(ix, "add"),
+            amount_x: x_added,
+            amount_y: y_added,
+        }, ix, debug));
+    }
+    if (x_withdrawn > 0 || y_withdrawn > 0) {
+        results.push(withDebug({
+            ...base,
+            type: "RemoveLiquidity",
+            active_bin_id,
+            ...getBinRange(ix, "remove"),
+            amount_x: x_withdrawn,
+            amount_y: y_withdrawn,
+        }, ix, debug));
+    }
+    return results;
+}
+
+function getTxType(ix: ParsedInstructionWithEvents): DlmmInstructionType {
+    if (
+        !("parsedInstruction" in ix)
+        || ix.parsedInstruction === null
+        || !("name" in ix.parsedInstruction)
+    ) {
         return "Other";
     }
-    throw new Error("Could not find Rebalancing event in rebalance transaction");
+    return IDL_INSTRUCTION_MAP[ix.parsedInstruction.name as keyof typeof IDL_INSTRUCTION_MAP] ?? "Other";
 }
 
 function getDlmmAccounts(ix: ParsedInstructionWithEvents): DlmmAccounts {
@@ -168,85 +203,113 @@ function binIdsFromList(values: unknown): number[] {
         .filter((id): id is number => id !== undefined);
 }
 
-function getBinRange(ix: ParsedInstructionWithEvents): {
+function collectRebalanceRemoveIds(params: Record<string, any>): number[] {
+    const ids: number[] = [];
+    for (const remove of params.removes ?? []) {
+        const min = pickNumber(remove, "min_bin_id", "minBinId");
+        const max = pickNumber(remove, "max_bin_id", "maxBinId");
+        if (min !== undefined) ids.push(min);
+        if (max !== undefined) ids.push(max);
+    }
+    return ids;
+}
+
+function collectRebalanceAddIds(params: Record<string, any>): number[] {
+    const ids: number[] = [];
+    const activeId = pickNumber(params, "active_id", "activeId");
+    if (activeId === undefined) return ids;
+    for (const add of params.adds ?? []) {
+        const minDelta = pickNumber(add, "min_delta_id", "minDeltaId");
+        const maxDelta = pickNumber(add, "max_delta_id", "maxDeltaId");
+        if (minDelta !== undefined) ids.push(activeId + minDelta);
+        if (maxDelta !== undefined) ids.push(activeId + maxDelta);
+    }
+    return ids;
+}
+
+function pairRange(min?: number, max?: number): { lower_bin_id: number; upper_bin_id: number } | undefined {
+    if (min === undefined || max === undefined) return;
+    return { lower_bin_id: min, upper_bin_id: max };
+}
+
+function getRebalanceEventRange(
+    ix: ParsedInstructionWithEvents,
+    side?: "add" | "remove",
+): { lower_bin_id?: number; upper_bin_id?: number } {
+    const rebalancingEvent = ix.events?.find((event) => event.name === "Rebalancing");
+    if (!rebalancingEvent) return {};
+
+    const newRange = pairRange(
+        toNumber(rebalancingEvent.data.new_min_id ?? rebalancingEvent.data.newMinId),
+        toNumber(rebalancingEvent.data.new_max_id ?? rebalancingEvent.data.newMaxId),
+    );
+    const oldRange = pairRange(
+        toNumber(rebalancingEvent.data.old_min_id ?? rebalancingEvent.data.oldMinId),
+        toNumber(rebalancingEvent.data.old_max_id ?? rebalancingEvent.data.oldMaxId),
+    );
+
+    if (side === "add") return newRange ?? oldRange ?? {};
+    if (side === "remove") return oldRange ?? newRange ?? {};
+    return newRange ?? oldRange ?? {};
+}
+
+function getBinRange(
+    ix: ParsedInstructionWithEvents,
+    side?: "add" | "remove",
+): {
     lower_bin_id?: number;
     upper_bin_id?: number;
 } {
     const data = getInstructionData(ix);
 
-    const lowerBinId = pickNumber(data, "lower_bin_id", "lowerBinId");
-    const width = pickNumber(data, "width");
-    if (lowerBinId !== undefined && width !== undefined) {
-        return { lower_bin_id: lowerBinId, upper_bin_id: lowerBinId + width - 1 };
-    }
+    if (!side) {
+        const lowerBinId = pickNumber(data, "lower_bin_id", "lowerBinId");
+        const width = pickNumber(data, "width");
+        if (lowerBinId !== undefined && width !== undefined) {
+            return { lower_bin_id: lowerBinId, upper_bin_id: lowerBinId + width - 1 };
+        }
 
-    const fromBinId = pickNumber(data, "from_bin_id", "fromBinId");
-    const toBinId = pickNumber(data, "to_bin_id", "toBinId");
-    if (fromBinId !== undefined && toBinId !== undefined) {
-        return { lower_bin_id: fromBinId, upper_bin_id: toBinId };
-    }
+        const fromBinId = pickNumber(data, "from_bin_id", "fromBinId");
+        const toBinId = pickNumber(data, "to_bin_id", "toBinId");
+        if (fromBinId !== undefined && toBinId !== undefined) {
+            return { lower_bin_id: fromBinId, upper_bin_id: toBinId };
+        }
 
-    const liquidityParameter = data?.liquidity_parameter ?? data?.liquidityParameter ?? data?.parameter;
-    const strategyParameters = liquidityParameter?.strategy_parameters ?? liquidityParameter?.strategyParameters;
-    const strategyMin = pickNumber(strategyParameters, "min_bin_id", "minBinId");
-    const strategyMax = pickNumber(strategyParameters, "max_bin_id", "maxBinId");
-    if (strategyMin !== undefined && strategyMax !== undefined) {
-        return { lower_bin_id: strategyMin, upper_bin_id: strategyMax };
-    }
+        const liquidityParameter = data?.liquidity_parameter ?? data?.liquidityParameter ?? data?.parameter;
+        const strategyParameters = liquidityParameter?.strategy_parameters ?? liquidityParameter?.strategyParameters;
+        const strategyMin = pickNumber(strategyParameters, "min_bin_id", "minBinId");
+        const strategyMax = pickNumber(strategyParameters, "max_bin_id", "maxBinId");
+        if (strategyMin !== undefined && strategyMax !== undefined) {
+            return { lower_bin_id: strategyMin, upper_bin_id: strategyMax };
+        }
 
-    const distributionRange = binRangeFromIds(binIdsFromList(
-        liquidityParameter?.bin_liquidity_dist
-        ?? liquidityParameter?.binLiquidityDist
-        ?? liquidityParameter?.bins
-        ?? data?.bins
-        ?? data?.bin_liquidity_removal
-        ?? data?.binLiquidityRemoval
-    ));
-    if (distributionRange) return distributionRange;
+        const distributionRange = binRangeFromIds(binIdsFromList(
+            liquidityParameter?.bin_liquidity_dist
+            ?? liquidityParameter?.binLiquidityDist
+            ?? liquidityParameter?.bins
+            ?? data?.bins
+            ?? data?.bin_liquidity_removal
+            ?? data?.binLiquidityRemoval
+        ));
+        if (distributionRange) return distributionRange;
 
-    const minBinId = pickNumber(data, "min_bin_id", "minBinId");
-    const maxBinId = pickNumber(data, "max_bin_id", "maxBinId");
-    if (minBinId !== undefined && maxBinId !== undefined) {
-        return { lower_bin_id: minBinId, upper_bin_id: maxBinId };
+        const minBinId = pickNumber(data, "min_bin_id", "minBinId");
+        const maxBinId = pickNumber(data, "max_bin_id", "maxBinId");
+        if (minBinId !== undefined && maxBinId !== undefined) {
+            return { lower_bin_id: minBinId, upper_bin_id: maxBinId };
+        }
     }
 
     const rebalanceParams = data?.params;
-    if (rebalanceParams && typeof rebalanceParams === "object") {
-        const ids: number[] = [];
-        for (const remove of rebalanceParams.removes ?? []) {
-            const min = pickNumber(remove, "min_bin_id", "minBinId");
-            const max = pickNumber(remove, "max_bin_id", "maxBinId");
-            if (min !== undefined) ids.push(min);
-            if (max !== undefined) ids.push(max);
-        }
-        const activeId = pickNumber(rebalanceParams, "active_id", "activeId");
-        if (activeId !== undefined) {
-            for (const add of rebalanceParams.adds ?? []) {
-                const minDelta = pickNumber(add, "min_delta_id", "minDeltaId");
-                const maxDelta = pickNumber(add, "max_delta_id", "maxDeltaId");
-                if (minDelta !== undefined) ids.push(activeId + minDelta);
-                if (maxDelta !== undefined) ids.push(activeId + maxDelta);
-            }
-        }
+    if (side && rebalanceParams && typeof rebalanceParams === "object") {
+        const ids = side === "add"
+            ? collectRebalanceAddIds(rebalanceParams)
+            : collectRebalanceRemoveIds(rebalanceParams);
         const rebalanceRange = binRangeFromIds(ids);
         if (rebalanceRange) return rebalanceRange;
     }
 
-    const rebalancingEvent = ix.events?.find((event) => event.name === "Rebalancing");
-    if (rebalancingEvent) {
-        const newMin = toNumber(rebalancingEvent.data.new_min_id ?? rebalancingEvent.data.newMinId);
-        const newMax = toNumber(rebalancingEvent.data.new_max_id ?? rebalancingEvent.data.newMaxId);
-        if (newMin !== undefined && newMax !== undefined) {
-            return { lower_bin_id: newMin, upper_bin_id: newMax };
-        }
-        const oldMin = toNumber(rebalancingEvent.data.old_min_id ?? rebalancingEvent.data.oldMinId);
-        const oldMax = toNumber(rebalancingEvent.data.old_max_id ?? rebalancingEvent.data.oldMaxId);
-        if (oldMin !== undefined && oldMax !== undefined) {
-            return { lower_bin_id: oldMin, upper_bin_id: oldMax };
-        }
-    }
-
-    return {};
+    return getRebalanceEventRange(ix, side);
 }
 
 function parseStrategy(value: unknown): DlmmStrategy | undefined {
@@ -317,21 +380,6 @@ function getAmounts(ix: ParsedInstructionWithEvents): {
         return {
             amount_x: Number(claimFeeEvent.data.fee_x),
             amount_y: Number(claimFeeEvent.data.fee_y),
-        };
-    }
-
-    const rebalancingEvent = events.find((e) => e.name === "Rebalancing");
-    if (rebalancingEvent) {
-        const x_added = Number(rebalancingEvent.data.x_added_amount);
-        const y_added = Number(rebalancingEvent.data.y_added_amount);
-        const x_withdrawn = Number(rebalancingEvent.data.x_withdrawn_amount);
-        const y_withdrawn = Number(rebalancingEvent.data.y_withdrawn_amount);
-        // getTxType already validated this is either add-only or remove-only
-        const isAdd = x_added > 0 || y_added > 0;
-        return {
-            active_bin_id: rebalancingEvent.data.active_bin_id,
-            amount_x: isAdd ? x_added : x_withdrawn,
-            amount_y: isAdd ? y_added : y_withdrawn,
         };
     }
 

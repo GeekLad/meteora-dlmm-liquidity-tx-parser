@@ -95,7 +95,9 @@ Bin range and strategy are omitted unless the instruction or event actually prov
 | Remove liquidity by range | `from_bin_id` / `to_bin_id` | — |
 | Remove liquidity by bin list | min/max `bin_id` in `bin_liquidity_removal` | — |
 | Claim fee/reward v2 | `min_bin_id` / `max_bin_id` | — |
-| Rebalance | remove/add ranges from instruction args, else `new_min_id` / `new_max_id` on the `Rebalancing` event | — |
+| Rebalance | add side: add ranges from instruction args, else `new_min_id` / `new_max_id`; remove side: remove ranges, else `old_min_id` / `old_max_id` | — |
+
+A `rebalance_liquidity` instruction that both adds and withdraws is emitted as two results: `AddLiquidity` then `RemoveLiquidity`, sharing the same signature, pool, and position.
 
 #### `DlmmStrategy`
 
@@ -119,7 +121,7 @@ type DlmmInstructionType =
   | "Other";
 ```
 
-> **Note:** Instructions categorized as `"Other"` (swaps, pool setup, governance, etc.) are filtered out and not included in the returned array.
+> **Note:** Instructions categorized as `"Other"` (swaps, pool setup, governance, etc.) are filtered out and not included in the returned array. Mixed rebalances are not `"Other"`; they are split into add and remove results as described above.
 
 ### `IDL_INSTRUCTION_MAP`
 
