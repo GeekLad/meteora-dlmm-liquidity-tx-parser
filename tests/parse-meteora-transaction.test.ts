@@ -213,17 +213,6 @@ describe("parseMeteoraTransaction", () => {
     const result = parseMeteoraTransaction(makeTx());
     expect(result).toHaveLength(2);
     expect(result[0]).toMatchObject({
-      type: "AddLiquidity",
-      signature: SIGNATURE,
-      pool: POOL,
-      position: POSITION,
-      active_bin_id: 102,
-      amount_x: 10,
-      amount_y: 20,
-      lower_bin_id: 90,
-      upper_bin_id: 120,
-    });
-    expect(result[1]).toMatchObject({
       type: "RemoveLiquidity",
       signature: SIGNATURE,
       pool: POOL,
@@ -233,6 +222,17 @@ describe("parseMeteoraTransaction", () => {
       amount_y: 40,
       lower_bin_id: 80,
       upper_bin_id: 100,
+    });
+    expect(result[1]).toMatchObject({
+      type: "AddLiquidity",
+      signature: SIGNATURE,
+      pool: POOL,
+      position: POSITION,
+      active_bin_id: 102,
+      amount_x: 10,
+      amount_y: 20,
+      lower_bin_id: 90,
+      upper_bin_id: 120,
     });
     expect(result[0].timestamp).toEqual(result[1].timestamp);
   });
@@ -360,9 +360,15 @@ describe("parseMeteoraTransaction", () => {
     const [ix] = parseMeteoraTransaction(makeTx());
     expect(ix.lower_bin_id).toBe(7);
     expect(ix.upper_bin_id).toBe(12);
+    expect(ix.bins).toEqual([
+      { bin_id: 12, bps: 10000 },
+      { bin_id: 7, bps: 5000 },
+      { bin_id: 9, bps: 10000 },
+    ]);
   });
 
   it("reads strategy and bin range from add-liquidity-by-strategy parameters", () => {
+    const parameteres = Array.from({ length: 64 }, (_, i) => (i === 0 ? 7 : 0));
     mockedParseInstructions.mockReturnValue([
       makeIx("add_liquidity_by_strategy2", [
         { name: "AddLiquidity", data: { active_bin_id: 100, amounts: [10, 20] } },
@@ -376,6 +382,7 @@ describe("parseMeteoraTransaction", () => {
               min_bin_id: 90,
               max_bin_id: 110,
               strategy_type: { SpotImBalanced: {} },
+              parameteres,
             },
           },
         },
@@ -387,6 +394,7 @@ describe("parseMeteoraTransaction", () => {
     expect(ix.lower_bin_id).toBe(90);
     expect(ix.upper_bin_id).toBe(110);
     expect(ix.strategy).toBe("Spot");
+    expect(ix.strategy_parameters).toEqual(parameteres);
   });
 
   it.each([
@@ -455,6 +463,106 @@ describe("parseMeteoraTransaction", () => {
     expect(ix.lower_bin_id).toBe(4);
     expect(ix.upper_bin_id).toBe(10);
     expect(ix.strategy).toBeUndefined();
+    expect(ix.bins).toEqual([
+      { bin_id: 4, weight: 1 },
+      { bin_id: 10, weight: 2 },
+      { bin_id: 6, weight: 1 },
+    ]);
+  });
+
+  it("falls back to instruction-arg amounts when events are missing", () => {
+    mockedParseInstructions.mockReturnValue([
+      makeIx("add_liquidity_by_strategy2", undefined, {
+        data: {
+          liquidity_parameter: {
+            amount_x: 111,
+            amount_y: "6d397e",
+            active_id: 50,
+            strategy_parameters: {
+              min_bin_id: 40,
+              max_bin_id: 60,
+              strategy_type: { SpotImBalanced: {} },
+            },
+          },
+        },
+      }),
+    ]);
+
+    const [ix] = parseMeteoraTransaction(makeTx());
+    expect(ix.amount_x).toBe(111);
+    expect(ix.amount_y).toBe(0x6d397e);
+    expect(ix.active_bin_id).toBe(50);
+    expect(ix.strategy).toBe("Spot");
+  });
+
+  it("infers Curve and BidAsk from signed rebalance deltas", () => {
+    mockedParseInstructions.mockReturnValue([
+      makeIx("rebalance_liquidity", [
+        {
+          name: "Rebalancing",
+          data: {
+            active_bin_id: 100,
+            x_added_amount: 1,
+            y_added_amount: 0,
+            x_withdrawn_amount: 0,
+            y_withdrawn_amount: 0,
+          },
+        },
+      ], {
+        data: {
+          params: {
+            active_id: 100,
+            adds: [{
+              min_delta_id: -5,
+              max_delta_id: -1,
+              x0: 0,
+              y0: 100,
+              delta_x: 0,
+              delta_y: 10,
+              bit_flag: 8, // delta_y negative → Curve
+              favor_x_in_active_id: false,
+            }],
+            removes: [],
+          },
+        },
+      }),
+    ]);
+
+    expect(parseMeteoraTransaction(makeTx())[0].strategy).toBe("Curve");
+
+    mockedParseInstructions.mockReturnValue([
+      makeIx("rebalance_liquidity", [
+        {
+          name: "Rebalancing",
+          data: {
+            active_bin_id: 100,
+            x_added_amount: 1,
+            y_added_amount: 0,
+            x_withdrawn_amount: 0,
+            y_withdrawn_amount: 0,
+          },
+        },
+      ], {
+        data: {
+          params: {
+            active_id: 100,
+            adds: [{
+              min_delta_id: -5,
+              max_delta_id: -1,
+              x0: 0,
+              y0: 100,
+              delta_x: 0,
+              delta_y: 10,
+              bit_flag: 0, // positive delta_y → BidAsk
+              favor_x_in_active_id: false,
+            }],
+            removes: [],
+          },
+        },
+      }),
+    ]);
+
+    expect(parseMeteoraTransaction(makeTx())[0].strategy).toBe("BidAsk");
   });
 
   it("uses claim_fee2 min_bin_id/max_bin_id instruction args", () => {
@@ -644,13 +752,13 @@ describe("parseMeteoraTransaction", () => {
       ]),
     ]);
 
-    const [add, remove] = parseMeteoraTransaction(makeTx());
-    expect(add.type).toBe("AddLiquidity");
-    expect(add.amount_x).toBe(50);
-    expect(add.amount_y).toBe(0);
+    const [remove, add] = parseMeteoraTransaction(makeTx());
     expect(remove.type).toBe("RemoveLiquidity");
     expect(remove.amount_x).toBe(0);
     expect(remove.amount_y).toBe(25);
+    expect(add.type).toBe("AddLiquidity");
+    expect(add.amount_x).toBe(50);
+    expect(add.amount_y).toBe(0);
   });
 
   it("splits a cross-token rebalance into add Y and remove X", () => {
@@ -669,9 +777,9 @@ describe("parseMeteoraTransaction", () => {
       ]),
     ]);
 
-    const [add, remove] = parseMeteoraTransaction(makeTx());
-    expect(add).toMatchObject({ type: "AddLiquidity", amount_x: 0, amount_y: 7 });
+    const [remove, add] = parseMeteoraTransaction(makeTx());
     expect(remove).toMatchObject({ type: "RemoveLiquidity", amount_x: 9, amount_y: 0 });
+    expect(add).toMatchObject({ type: "AddLiquidity", amount_x: 0, amount_y: 7 });
   });
 
   it("uses per-side bin ranges when a mixed rebalance has add and remove params", () => {
@@ -702,13 +810,13 @@ describe("parseMeteoraTransaction", () => {
       }),
     ]);
 
-    const [add, remove] = parseMeteoraTransaction(makeTx());
-    expect(add.type).toBe("AddLiquidity");
-    expect(add.lower_bin_id).toBe(48);
-    expect(add.upper_bin_id).toBe(54);
+    const [remove, add] = parseMeteoraTransaction(makeTx());
     expect(remove.type).toBe("RemoveLiquidity");
     expect(remove.lower_bin_id).toBe(40);
     expect(remove.upper_bin_id).toBe(45);
+    expect(add.type).toBe("AddLiquidity");
+    expect(add.lower_bin_id).toBe(48);
+    expect(add.upper_bin_id).toBe(54);
   });
 
   it("splits a mixed rebalance that appears as an inner instruction", () => {
@@ -735,10 +843,10 @@ describe("parseMeteoraTransaction", () => {
     ]);
 
     const result = parseMeteoraTransaction(makeTx());
-    expect(result.map((ix) => ix.type)).toEqual(["AddLiquidity", "RemoveLiquidity"]);
-    expect(result[0].amount_x).toBe(11);
-    expect(result[1].amount_x).toBe(12);
-    expect(result[1].amount_y).toBe(13);
+    expect(result.map((ix) => ix.type)).toEqual(["RemoveLiquidity", "AddLiquidity"]);
+    expect(result[0].amount_x).toBe(12);
+    expect(result[0].amount_y).toBe(13);
+    expect(result[1].amount_x).toBe(11);
   });
 
   it("returns no instructions when a rebalance event has zero add and withdraw amounts", () => {
@@ -781,12 +889,85 @@ describe("parseMeteoraTransaction", () => {
     expect(result[1].originalParsedInstruction).toEqual(original);
   });
 
-  it("throws when a rebalance instruction has no Rebalancing event", () => {
+  it("returns no sides when a rebalance has no event and no add/remove params", () => {
     mockedParseInstructions.mockReturnValue([makeIx("rebalance_liquidity")]);
 
-    expect(() => parseMeteoraTransaction(makeTx())).toThrow(
-      "Could not find Rebalancing event in rebalance transaction"
-    );
+    expect(parseMeteoraTransaction(makeTx())).toEqual([]);
+  });
+
+  it("emits rebalance sides from params when the Rebalancing event is missing", () => {
+    mockedParseInstructions.mockReturnValue([
+      makeIx("rebalance_liquidity", undefined, {
+        data: {
+          params: {
+            active_id: -5606,
+            removes: [{ min_bin_id: 10, max_bin_id: 12, bps: 10000 }],
+            adds: [{
+              min_delta_id: -70,
+              max_delta_id: -1,
+              x0: "00",
+              y0: "6d397e",
+              delta_x: "00",
+              delta_y: "00",
+              bit_flag: 0,
+              favor_x_in_active_id: false,
+            }],
+          },
+        },
+      }),
+    ]);
+
+    const [remove, add] = parseMeteoraTransaction(makeTx());
+    expect(remove).toMatchObject({
+      type: "RemoveLiquidity",
+      active_bin_id: -5606,
+      lower_bin_id: 10,
+      upper_bin_id: 12,
+      rebalance: {
+        removes: [{ min_bin_id: 10, max_bin_id: 12, bps: 10000 }],
+      },
+    });
+    expect(remove.amount_x).toBeUndefined();
+    expect(add).toMatchObject({
+      type: "AddLiquidity",
+      active_bin_id: -5606,
+      strategy: "Spot",
+      lower_bin_id: -5676,
+      upper_bin_id: -5607,
+      rebalance: {
+        adds: [{
+          min_delta_id: -70,
+          max_delta_id: -1,
+          x0: 0,
+          y0: 0x6d397e,
+          delta_x: 0,
+          delta_y: 0,
+          bit_flag: 0,
+          favor_x_in_active_id: false,
+        }],
+      },
+    });
+  });
+
+  it("normalizes hex-like rebalance event amounts to numbers", () => {
+    mockedParseInstructions.mockReturnValue([
+      makeIx("rebalance_liquidity", [
+        {
+          name: "Rebalancing",
+          data: {
+            active_bin_id: 1,
+            x_added_amount: "cef047ee",
+            y_added_amount: "00",
+            x_withdrawn_amount: "adc15e7f",
+            y_withdrawn_amount: "00",
+          },
+        },
+      ]),
+    ]);
+
+    const [remove, add] = parseMeteoraTransaction(makeTx());
+    expect(remove.amount_x).toBe(0xadc15e7f);
+    expect(add.amount_x).toBe(0xcef047ee);
   });
 
   it("reads ClaimFee amounts when ClaimFee2 is absent", () => {
@@ -1054,13 +1235,13 @@ describe("parseMeteoraTransaction", () => {
       }),
     ]);
 
-    const [add, remove] = parseMeteoraTransaction(makeTx());
-    expect(add.type).toBe("AddLiquidity");
-    expect(add.lower_bin_id).toBe(23);
-    expect(add.upper_bin_id).toBe(23);
+    const [remove, add] = parseMeteoraTransaction(makeTx());
     expect(remove.type).toBe("RemoveLiquidity");
     expect(remove.lower_bin_id).toBe(15);
     expect(remove.upper_bin_id).toBe(15);
+    expect(add.type).toBe("AddLiquidity");
+    expect(add.lower_bin_id).toBe(23);
+    expect(add.upper_bin_id).toBe(23);
   });
 
   it("falls through add-side params when active_id is missing", () => {

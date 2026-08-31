@@ -4,6 +4,39 @@ export type DlmmInstructionType = "CreatePosition" | "ClosePosition" | "AddLiqui
 export type DlmmStrategy = "Spot" | "Curve" | "BidAsk";
 export type DlmmAccounts = { pool: string; position: string };
 
+/** Per-bin detail for weight / bin-list add and bin-list remove. */
+export interface DlmmBin {
+    bin_id: number;
+    weight?: number;
+    amount_x?: number;
+    amount_y?: number;
+    bps?: number;
+}
+
+/** One rebalance add segment (IDL AddLiquidityParams, padding omitted). */
+export interface DlmmRebalanceAdd {
+    min_delta_id: number;
+    max_delta_id: number;
+    x0: number;
+    y0: number;
+    delta_x: number;
+    delta_y: number;
+    favor_x_in_active_id: boolean;
+    bit_flag: number;
+}
+
+/** One rebalance remove segment (IDL RemoveLiquidityParams, padding omitted). */
+export interface DlmmRebalanceRemove {
+    min_bin_id?: number;
+    max_bin_id?: number;
+    bps: number;
+}
+
+export interface DlmmRebalance {
+    adds?: DlmmRebalanceAdd[];
+    removes?: DlmmRebalanceRemove[];
+}
+
 export interface DlmmInstruction {
     signature: string;
     signer: string;
@@ -19,6 +52,12 @@ export interface DlmmInstruction {
     strategy?: DlmmStrategy;
     amount_x?: number;
     amount_y?: number;
+    /** Raw 64-byte StrategyParameters.parameteres blob (strategy adds only). */
+    strategy_parameters?: number[];
+    /** Explicit per-bin distribution when the instruction carries one. */
+    bins?: DlmmBin[];
+    /** Rebalance instruction-arg distributions on split add/remove sides. */
+    rebalance?: DlmmRebalance;
     originalParsedInstruction?: ParsedInstructionWithEvents;
 }
 
